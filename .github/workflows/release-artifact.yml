@@ -1,0 +1,129 @@
+name: Release Artifact
+
+# Publishes @chronary/agent-init (one-liner agent bootstrap) to npm and creates
+# a GitHub Release. The CLI binary remains `chronary-agent-init` so
+# `npx chronary-agent-init --help` resolves after install; only the package
+# name is scoped (`@chronary/agent-init`).
+#
+# Provenance posture:
+#   - Publishes via npm OIDC Trusted Publishing — no NPM_TOKEN required.
+#     The `id-token: write` permission and `registry-url` on setup-node
+#     are sufficient once chronary-agent-init is registered as a Trusted
+#     Publisher for @chronary/agent-init on npmjs.com.
+#   - npm CLI >= 11.5.1 is required for OIDC trusted publishing; we
+#     pin npm to latest before publishing because Node 22 ships with
+#     npm 10.x by default.
+#   - `npm publish --provenance` records a Sigstore attestation that
+#     links the published tarball back to this workflow run.
+#   - GitHub artifact attestations also fire on public repos via
+#     actions/attest-build-provenance.
+#
+# Workspace dep posture:
+#   - package.json has zero workspace:* deps. No pre-install rewrite step
+#     is needed (contrast with @chronary/mcp which depends on @chronary/sdk
+#     and @chronary/toolkit via workspace:*).
+#
+# Prerequisites (one-time, on flip to public-registry):
+#   1. chronary-agent-init is public on GitHub.
+#   2. First publish must use a classic token from local (npm has no
+#      "Pending Publisher" flow — see npm/cli#8544). After that, register
+#      Trusted Publisher on npmjs.com → @chronary/agent-init → Access tab →
+#      repo `Chronary/chronary-agent-init`, workflow `release-artifact.yml`,
+#      environment blank.
+#   3. NPM_TOKEN repo secret (if any) has been deleted.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4.1.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: |
+          # npm install -g npm@latest fails when the runner's bundled npm is incomplete
+          # (e.g. missing promise-retry on Node 22.22+). Bypass by downloading the
+          # tarball directly into the existing module directory.
+          NPM_DIR="$(node -e "process.stdout.write(require('path').resolve(process.execPath,'../../lib/node_modules/npm'))")"
+          curl -fsSL https://registry.npmjs.org/npm/-/npm-11.5.1.tgz -o /tmp/npm.tgz
+          tar -xzf /tmp/npm.tgz --strip-components=1 -C "$NPM_DIR"
+          npm --version
+
+      - name: Validate release manifest
+        id: manifest
+        run: |
+          node -e "const fs=require('fs'); const manifest=JSON.parse(fs.readFileSync('.chronary-release.json','utf8')); if (manifest.artifact !== 'agent-init') throw new Error('Expected artifact agent-init'); if (manifest.public_tag !== process.env.GITHUB_REF_NAME) throw new Error('Tag mismatch between manifest and workflow ref'); require('fs').appendFileSync(process.env.GITHUB_OUTPUT, 'publish_registry=' + String(Boolean(manifest.publish_registry)) + '\n');"
+          test -f RELEASE_NOTES.txt
+
+      - name: Install dependencies
+        if: steps.manifest.outputs.publish_registry == 'true'
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Validate package contents
+        run: |
+          test -f README.md
+          test -f LICENSE
+          test -f CHANGELOG.md
+
+      - name: Typecheck
+        if: steps.manifest.outputs.publish_registry == 'true'
+        run: pnpm typecheck
+
+      # Build BEFORE test — the CLI tests spawn `node dist/index.js` to
+      # verify argv / exit-code behaviour, so dist must exist first.
+      # Mirrors packages/agent-init/turbo.json's `test depends on build`
+      # override; the coordinator + mirror workflow don't use turbo so
+      # the ordering is encoded explicitly here.
+      - name: Build
+        if: steps.manifest.outputs.publish_registry == 'true'
+        run: pnpm build
+
+      - name: Test
+        if: steps.manifest.outputs.publish_registry == 'true'
+        run: pnpm test
+
+      - name: Pack tarball
+        if: steps.manifest.outputs.publish_registry == 'true'
+        run: pnpm pack
+
+      - name: Attest build provenance for npm tarball
+        if: steps.manifest.outputs.publish_registry == 'true' && github.event.repository.visibility == 'public'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: '*.tgz'
+
+      - name: Publish to npm
+        if: steps.manifest.outputs.publish_registry == 'true'
+        run: npm publish *.tgz --provenance --access public
+
+      - name: Create GitHub Release
+        run: |
+          if [ "${{ steps.manifest.outputs.publish_registry }}" = "true" ]; then
+            gh release create "${GITHUB_REF_NAME}" *.tgz \
+              --title "@chronary/agent-init ${GITHUB_REF_NAME}" \
+              --notes-file RELEASE_NOTES.txt
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "@chronary/agent-init ${GITHUB_REF_NAME}" \
+              --notes-file RELEASE_NOTES.txt
+          fi
