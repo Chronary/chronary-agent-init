@@ -1,6 +1,6 @@
 {
   "name": "@chronary/agent-init",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "One-liner bootstrap for AI agents: sign up, verify OTP, create a smoke calendar. `npx @chronary/agent-init`.",
   "license": "Apache-2.0",
   "type": "module",
@@ -28,7 +28,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Chronary/chronary-cli"
+    "url": "https://github.com/Chronary/chronary-agent-init"
   },
   "homepage": "https://chronary.ai",
   "bugs": {

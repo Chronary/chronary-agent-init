@@ -1,5 +1,14 @@
 # @chronary/agent-init — Changelog
 
+## 0.1.2 (2026-05-30)
+
+- Fix `repository.url` in package.json — was pointing at the wrong mirror
+  (`chronary-cli`) because of a copy-paste from the MCP scaffold; now points
+  at `chronary-agent-init`. npm's OIDC provenance verifier rejected 0.1.1
+  with E422 because the in-tarball `repository.url` didn't match the GitHub
+  repo that signed the Sigstore bundle. 0.1.2 is the first version with a
+  consistent provenance attestation.
+
 ## 0.1.1 (2026-05-29)
 
 - First version to ship via OIDC trusted publishing with Sigstore provenance.
