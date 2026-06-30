@@ -2,4 +2,4 @@
 // the User-Agent header. The release coordinator's drift gate
 // (.github/public-artifacts.json → versionChecks) keeps this in lockstep
 // with package.json#version.
-export const VERSION = '0.1.2';
+export const VERSION = '0.1.3';

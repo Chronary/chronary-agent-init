@@ -1,9 +1,9 @@
 {
   "artifact": "agent-init",
-  "version": "0.1.2",
-  "public_tag": "v0.1.2",
-  "private_source_sha": "c115ad4fe6eb370db7eb1086b162fd80bb50887f",
-  "private_release_tag": "public-release/20260530.5-c115ad4",
+  "version": "0.1.3",
+  "public_tag": "v0.1.3",
+  "private_source_sha": "ce3c05487560e2e92a84e88ef9ceb9c39900b8dd",
+  "private_release_tag": "public-release/20260630.1-ce3c054",
   "publish_registry": true,
-  "generated_at": "2026-05-30T05:48:59.657Z"
+  "generated_at": "2026-06-30T20:11:25.408Z"
 }

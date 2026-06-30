@@ -41,6 +41,17 @@ describe('@chronary/agent-init CLI', () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/unknown flag --nope/);
   });
+
+  it('exits 2 on a malformed pre-supplied --otp before any network call', () => {
+    // Guard runs immediately after the email check and before fetchTos/sign-up,
+    // so a bad pre-supplied OTP short-circuits without provisioning anything.
+    const r = run(['--email', 'agent@example.com', '--otp', 'abc']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/OTP must be exactly 6 digits/);
+    // No remote call happened: we never reached the "Bootstrapping" log line
+    // that immediately precedes fetchTos/sign-up.
+    expect(r.stderr).not.toMatch(/Bootstrapping agent at/);
+  });
 });
 
 // Network behavior is covered by the cold-agent smoke

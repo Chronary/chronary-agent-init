@@ -194,6 +194,15 @@ async function main(): Promise<void> {
     exit(2);
   }
 
+  // Validate a pre-supplied OTP (--otp / CHRONARY_OTP) BEFORE any remote call
+  // so a malformed value short-circuits before sign-up provisions an org/agent.
+  // The interactive path can't be checked here (the OTP doesn't exist until the
+  // sign-up email is sent); it's covered by the post-sign-up check below.
+  if (args.otp !== undefined && !/^\d{6}$/.test(args.otp)) {
+    stderr.write(`agent-init: OTP must be exactly 6 digits, got ${JSON.stringify(args.otp)}\n`);
+    exit(2);
+  }
+
   stderr.write(`Bootstrapping agent at ${args.api}\n`);
 
   const tosVersion = args.tosVersion ?? (await fetchTos(args.api));
