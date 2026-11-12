@@ -1,5 +1,11 @@
 # @chronary/agent-init — Changelog
 
+## 0.1.4 (2026-11-09)
+
+- When sign-ups are paused, the API answers with HTTP 202 `{ waitlisted: true, message }`
+  and no key. agent-init now reports that message instead of a generic
+  "Sign-up failed: HTTP 202" (#1655).
+
 ## 0.1.2 (2026-05-30)
 
 - Fix `repository.url` in package.json — was pointing at the wrong mirror

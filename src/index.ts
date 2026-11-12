@@ -130,6 +130,12 @@ async function signUpWithBackoff(
           'If you have the prior API key, set CHRONARY_API_KEY and skip this command.',
       );
     }
+    if (r.status === 202 && (r.body as { waitlisted?: unknown } | null)?.waitlisted === true) {
+      // Sign-ups are paused (waitlist mode or early access full). The API
+      // gives every address the same body and no key (#1655).
+      const message = (r.body as { message?: string }).message ?? 'Sign-ups are paused.';
+      throw new Error(`No API key issued: ${message}`);
+    }
     if (r.status === 429) {
       const wait = r.retryAfter ?? Math.pow(2, attempt) * 5;
       stderr.write(`Rate-limited (429); sleeping ${wait}s before retry…\n`);

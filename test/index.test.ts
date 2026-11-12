@@ -52,6 +52,36 @@ describe('@chronary/agent-init CLI', () => {
     // that immediately precedes fetchTos/sign-up.
     expect(r.stderr).not.toMatch(/Bootstrapping agent at/);
   });
+
+  it('reports the paused-sign-ups message on a 202 waitlisted response (#1655)', async () => {
+    const { createServer } = await import('node:http');
+    const { spawn } = await import('node:child_process');
+    const server = createServer((req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      if (req.url === '/v1/auth/terms/current') {
+        res.end(JSON.stringify({ version: '2026-04-17' }));
+        return;
+      }
+      res.statusCode = 202;
+      res.end(JSON.stringify({ waitlisted: true, message: 'Sign-ups are paused, so no API key was issued.' }));
+    });
+    await new Promise<void>((ok) => server.listen(0, '127.0.0.1', () => ok()));
+    const { port } = server.address() as { port: number };
+    try {
+      if (!existsSync(DIST)) throw new Error('dist/index.js missing — run the build first');
+      const child = spawn('node', [DIST, '--email', 'agent@example.com', '--api', `http://127.0.0.1:${port}`], {
+        env: { PATH: process.env.PATH },
+      });
+      let stderr = '';
+      child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
+      const code = await new Promise<number | null>((ok) => child.on('close', ok));
+      expect(code).not.toBe(0);
+      expect(stderr).toMatch(/No API key issued: Sign-ups are paused/);
+      expect(stderr).not.toMatch(/HTTP 202/);
+    } finally {
+      server.close();
+    }
+  });
 });
 
 // Network behavior is covered by the cold-agent smoke
