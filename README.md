@@ -10,7 +10,7 @@ In ~5 seconds the script does this:
 
 1. `POST /v1/agent/sign-up` — provisions a new org + restricted API key
 2. Reads the OTP from `CHRONARY_OTP` env, `--otp` flag, or stdin (TTY only)
-3. `POST /v1/agent/verify` — upgrades the key to the full Free-tier plan
+3. `POST /v1/agent/verify` — moves the org to the Free plan (1 agent, 1 calendar)
 4. `POST /v1/calendars` — creates a smoke calendar to prove write access works
 
 The last line of stdout is the new API key, so it composes:

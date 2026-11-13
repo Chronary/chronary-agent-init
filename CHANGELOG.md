@@ -1,5 +1,10 @@
 # @chronary/agent-init — Changelog
 
+## 0.1.5 (unreleased)
+
+- A 429 `quota_exceeded` is no longer retried, and a `Retry-After` longer than
+  60 seconds is capped at 60, like every Chronary SDK (#1936).
+
 ## 0.1.4 (2026-11-09)
 
 - When sign-ups are paused, the API answers with HTTP 202 `{ waitlisted: true, message }`

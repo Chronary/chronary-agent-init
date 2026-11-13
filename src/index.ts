@@ -26,6 +26,7 @@
 import { stdin, stdout, stderr, env, argv, exit } from 'node:process';
 import * as readline from 'node:readline/promises';
 import { VERSION } from './version.js';
+import { retryWaitSeconds } from './retry.js';
 
 interface Args {
   email?: string;
@@ -136,8 +137,9 @@ async function signUpWithBackoff(
       const message = (r.body as { message?: string }).message ?? 'Sign-ups are paused.';
       throw new Error(`No API key issued: ${message}`);
     }
-    if (r.status === 429) {
-      const wait = r.retryAfter ?? Math.pow(2, attempt) * 5;
+    // A rate-limit 429 waits (Retry-After, at most 60s); a quota 429 is not retried (#1936).
+    const wait = retryWaitSeconds(r, attempt);
+    if (wait !== null) {
       stderr.write(`Rate-limited (429); sleeping ${wait}s before retry…\n`);
       await new Promise((res) => setTimeout(res, wait * 1000));
       continue;
