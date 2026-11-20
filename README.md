@@ -30,15 +30,48 @@ CHRONARY_OTP=123456 \
 Never blocks waiting for a TTY prompt that won't come — if `stdin.isTTY` is
 false and `CHRONARY_OTP` is unset, the process exits 2 with a clear message.
 
+## No email: a claimable calendar (`--anonymous`)
+
+When no inbox is available, you can sign up without an email:
+
+```bash
+npx -y @chronary/agent-init@latest --anonymous
+```
+
+1. `POST /v1/agent/sign-up/anonymous` creates a claimable organization. Its key works at once, at Sandbox limits.
+2. `POST /v1/calendars` creates the smoke calendar, which is the plan's one calendar.
+
+As soon as the sign-up answers, the command prints the key, a **claim link** and the **expiry** on stderr. A failed smoke calendar after that is only a warning: the key and the link stay valid. Give the claim link to the person who should own the calendar. When they open it while signed in to the [Chronary console](https://console.chronary.ai), the agent, calendar and events move into their account, and this key stops working. The link works once.
+
+If nobody claims the calendar within 72 hours, the key stops working and the organization and its data are deleted.
+
+Restrictions:
+- The organization sends and receives no email.
+- It cannot create webhook endpoints.
+- `--email` / `--otp` cannot be combined with `--anonymous`.
+
+When `--anonymous` is not available on an API (`503 anonymous_signup_disabled`), sign up with `--email` instead. The claimable calendars guide covers the details: https://docs.chronary.ai/guides/claimable-calendars/
+
+To keep the claim link when you capture stdout, add `--json`:
+
+```bash
+npx -y @chronary/agent-init@latest --anonymous --json
+# {"api_key":"chr_sk_...","org_id":"...","agent_id":"agt_...","calendar_id":"cal_...","claim_url":"https://console.chronary.ai/claim/anonymous#token=...","expires_at":"..."}
+```
+
+Signing up (either flow) accepts the [Terms of Service](https://chronary.ai/terms) for the person or organization you act for.
+
 ## Flags
 
 | Flag | Env | Default | Purpose |
 | --- | --- | --- | --- |
-| `--email` | `CHRONARY_EMAIL` | _(required)_ | Email to register |
+| `--email` | `CHRONARY_EMAIL` | _(required unless `--anonymous`)_ | Email to register |
 | `--otp` | `CHRONARY_OTP` | stdin prompt | 6-digit OTP (verify step) |
+| `--anonymous` | `CHRONARY_ANONYMOUS=1` | off | Sign up with no email (claimable, 72 h) |
+| `--json` | `CHRONARY_JSON=1` (shell version only) | off | One JSON line on stdout instead of the bare key |
 | `--api` | `CHRONARY_API` | `https://api.chronary.ai` | API base URL |
 | `--agent-name` | `CHRONARY_AGENT_NAME` | `Bootstrap Agent` | Display name |
-| `--tos-version` | `CHRONARY_TOS_VERSION` | _(fetched live)_ | Override ToS version |
+| `--tos-version` | `CHRONARY_TOS_VERSION` | _(fetched live)_ | Pin a ToS version. A pinned version is never swapped: if it is out of date, the command exits 1 and names the current one |
 
 ## Shell fallback (no Node)
 
@@ -46,6 +79,10 @@ If `npx` isn't available, the equivalent shell script is:
 
 ```bash
 curl -sSfL https://chronary.ai/agent-init.sh | CHRONARY_EMAIL=you@example.com sh
+# or, with no email (claimable):
+curl -sSfL https://chronary.ai/agent-init.sh | CHRONARY_ANONYMOUS=1 sh
+# one JSON line on stdout, like --json:
+curl -sSfL https://chronary.ai/agent-init.sh | CHRONARY_ANONYMOUS=1 CHRONARY_JSON=1 sh
 ```
 
 The shell version is intentionally a 1:1 mirror of this package — same env
