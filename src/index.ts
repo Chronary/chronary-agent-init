@@ -36,6 +36,7 @@ import { stdin, stdout, stderr, env, argv, exit } from 'node:process';
 import * as readline from 'node:readline/promises';
 import { VERSION } from './version.js';
 import { MAX_RETRY_AFTER_SECONDS, retryWaitSeconds } from './retry.js';
+import { calendarTimeZone } from './timezone.js';
 
 interface Args {
   email?: string;
@@ -296,7 +297,7 @@ async function createSmokeCalendar(
     headers: { Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       name: 'Welcome to Chronary',
-      timezone: env.TZ ?? 'UTC',
+      timezone: calendarTimeZone(env.TZ),
     }),
   });
   if (r.status !== 201) {

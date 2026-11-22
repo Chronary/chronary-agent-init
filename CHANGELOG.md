@@ -1,6 +1,15 @@
 # @chronary/agent-init — Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.1 (unreleased)
+
+- The smoke calendar's time zone no longer comes straight from `TZ`. The API
+  now rejects a time zone name it cannot use (#2512), and POSIX values such as
+  `:UTC` (the AWS Lambda default), `UTC0` or `:/etc/localtime` made the
+  bootstrap fail with a 400 after the key was minted. `TZ` is used only when
+  it is a zone name the API accepts; otherwise the runtime's own zone, then
+  `UTC`.
+
+## 0.2.0
 
 - `--anonymous` (or `CHRONARY_ANONYMOUS=1`) signs up without an email or OTP
   (#2335). It calls `POST /v1/agent/sign-up/anonymous`, which creates a
