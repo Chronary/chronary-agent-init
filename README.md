@@ -19,16 +19,35 @@ The last line of stdout is the new API key, so it composes:
 export CHRONARY_API_KEY="$(npx -y @chronary/agent-init@latest --email you@example.com --otp 123456)"
 ```
 
+The key is printed on stderr (`export CHRONARY_API_KEY=...`) as soon as the
+sign-up returns it, before the OTP is read. It is the only copy: running the
+sign-up again for an email that is not verified yet sends a new code but
+returns no key. If the OTP is missing or wrong, or the calendar step fails,
+keep that key and finish with `--verify-only`. If the code expired (60
+minutes) or too many tries used it up, run the sign-up again with the same
+email: it prints no key but emails a new code, and the first key stays valid.
+Then run `--verify-only` with the new code.
+
 ## Non-interactive flow (CI / Claude Code / Cursor)
 
+The OTP does not exist until the sign-up sends it, so a run with no TTY takes
+two steps:
+
 ```bash
-CHRONARY_EMAIL=you@example.com \
-CHRONARY_OTP=123456 \
-  npx @chronary/agent-init@latest
+# 1. Sign up. Exits 2 after printing the key on stderr (no TTY, no OTP).
+CHRONARY_EMAIL=you@example.com npx @chronary/agent-init@latest
+
+# 2. With the code from the email (valid for 60 minutes):
+CHRONARY_API_KEY=chr_sk_... CHRONARY_OTP=123456 \
+  npx @chronary/agent-init@latest --verify-only
 ```
 
 Never blocks waiting for a TTY prompt that won't come — if `stdin.isTTY` is
 false and `CHRONARY_OTP` is unset, the process exits 2 with a clear message.
+`--verify-only` reads the key from `CHRONARY_API_KEY` only (never argv), does
+no sign-up, and prints the key last on stdout like a full run. It ignores
+`CHRONARY_EMAIL` / `CHRONARY_ANONYMOUS` left in the environment; only an
+explicit `--email` / `--anonymous` flag is refused.
 
 ## No email: a claimable calendar (`--anonymous`)
 
@@ -68,6 +87,7 @@ Signing up (either flow) accepts the [Terms of Service](https://chronary.ai/term
 | `--email` | `CHRONARY_EMAIL` | _(required unless `--anonymous`)_ | Email to register |
 | `--otp` | `CHRONARY_OTP` | stdin prompt | 6-digit OTP (verify step) |
 | `--anonymous` | `CHRONARY_ANONYMOUS=1` | off | Sign up with no email (claimable, 72 h) |
+| `--verify-only` | _(key in `CHRONARY_API_KEY`)_ | off | Finish an email sign-up that stopped before verify: verify + smoke calendar, no sign-up |
 | `--json` | `CHRONARY_JSON=1` (shell version only) | off | One JSON line on stdout instead of the bare key |
 | `--api` | `CHRONARY_API` | `https://api.chronary.ai` | API base URL |
 | `--agent-name` | `CHRONARY_AGENT_NAME` | `Bootstrap Agent` | Display name |

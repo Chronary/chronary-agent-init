@@ -3,6 +3,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { VERSION } from '../src/version';
+
 const DIST = resolve(__dirname, '../dist/index.js');
 
 function run(args: string[], env: Record<string, string> = {}) {
@@ -101,7 +103,7 @@ const ANON_201 = {
 async function withApi(routes: Record<string, Route>, args: string[], env: Record<string, string> = {}) {
   const { createServer } = await import('node:http');
   const { spawn } = await import('node:child_process');
-  const seen: Array<{ route: string; body?: Record<string, unknown>; auth?: string }> = [];
+  const seen: Array<{ route: string; body?: Record<string, unknown>; auth?: string; client?: string }> = [];
   const server = createServer((req, res) => {
     let raw = '';
     req.on('data', (d: Buffer) => (raw += d.toString()));
@@ -109,7 +111,8 @@ async function withApi(routes: Record<string, Route>, args: string[], env: Recor
       const route = `${req.method} ${req.url}`;
       const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : undefined;
       const auth = req.headers.authorization;
-      seen.push({ route, body, auth });
+      const client = req.headers['x-chronary-client'];
+      seen.push({ route, body, auth, client: typeof client === 'string' ? client : undefined });
       const handler = routes[route];
       const reply = handler ? handler(body, auth) : { status: 404, body: { error: { type: 'not_found', message: route } } };
       res.statusCode = reply.status;
@@ -165,6 +168,8 @@ describe('@chronary/agent-init --anonymous (#2335)', () => {
     expect(r.stderr).toMatch(/deleted/);
     expect(r.stdout.trim().split('\n').at(-1)).toBe('chr_sk_anon_key');
     expect(r.stdout).not.toContain('claim_secret_token');
+    // Every request names agent-init, so the API attributes the sign-up to it (#976).
+    expect(r.seen.map((s) => s.client)).toEqual(Array(3).fill(`chronary-agent-init/${VERSION}`));
   });
 
   it('CHRONARY_ANONYMOUS=1 selects the same flow, and --json prints one JSON line with the claim link', async () => {
@@ -367,6 +372,126 @@ describe('@chronary/agent-init --json (email flow)', () => {
       agent_id: 'agt_email0000001',
       calendar_id: 'cal_anon0000001',
     });
+  });
+});
+
+// ── #2518: the email flow shows the one-time key before anything can fail ──
+
+describe('@chronary/agent-init email flow keeps the key when a later step fails (#2518)', () => {
+  const KEY = 'chr_sk_bughunt_only_copy';
+  const signUp: Route = () => ({ status: 200, body: { api_key: KEY, org_id: 'org_bughunt', agent_id: 'agt_bughunt' } });
+  const verified: Route = () => ({ status: 200, body: { verified: true } });
+
+  it('verify fails (wrong or pre-guessed --otp): the key is on stderr before the failure, with the --verify-only hint', async () => {
+    const r = await withApi(
+      {
+        'GET /v1/auth/terms/current': terms,
+        'POST /v1/agent/sign-up': signUp,
+        'POST /v1/agent/verify': () => ({ status: 400, body: { error: { type: 'invalid_otp', message: 'Invalid OTP' } } }),
+        'POST /v1/calendars': calendar,
+      },
+      ['--email', 'bughunt-a@example.com', '--otp', '123456'],
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(`export CHRONARY_API_KEY=${KEY}`);
+    expect(r.stderr.indexOf(KEY)).toBeLessThan(r.stderr.indexOf('Verify failed'));
+    expect(r.stderr).toMatch(/--verify-only/);
+    expect(r.seen.map((s) => s.route)).not.toContain('POST /v1/calendars');
+  });
+
+  it('no OTP and stdin not a TTY (curl | sh, agent harness): exit 2 with the key shown and no verify call', async () => {
+    const r = await withApi(
+      { 'GET /v1/auth/terms/current': terms, 'POST /v1/agent/sign-up': signUp, 'POST /v1/agent/verify': verified },
+      ['--email', 'bughunt-b@example.com'],
+    );
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain(`export CHRONARY_API_KEY=${KEY}`);
+    expect(r.stderr).toMatch(/stdin is not a TTY[\s\S]*--verify-only/);
+    expect(r.seen.map((s) => s.route)).not.toContain('POST /v1/agent/verify');
+  });
+
+  it('smoke calendar fails after verify: exit 1, the key already shown', async () => {
+    const r = await withApi(
+      {
+        'GET /v1/auth/terms/current': terms,
+        'POST /v1/agent/sign-up': signUp,
+        'POST /v1/agent/verify': verified,
+        'POST /v1/calendars': () => ({ status: 500, body: { error: { type: 'internal' } } }),
+      },
+      ['--email', 'bughunt-c@example.com', '--otp', '123456'],
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(`export CHRONARY_API_KEY=${KEY}`);
+    expect(r.stderr.indexOf(KEY)).toBeLessThan(r.stderr.indexOf('Create calendar failed'));
+  });
+
+  it('a successful run prints the key once on stderr and last on stdout', async () => {
+    const r = await withApi(
+      { 'GET /v1/auth/terms/current': terms, 'POST /v1/agent/sign-up': signUp, 'POST /v1/agent/verify': verified, 'POST /v1/calendars': calendar },
+      ['--email', 'bughunt-d@example.com', '--otp', '123456'],
+    );
+    expect(r.code).toBe(0);
+    expect(r.stderr.split(KEY)).toHaveLength(2);
+    expect(r.stdout.trim().split('\n').at(-1)).toBe(KEY);
+  });
+
+  it('--verify-only finishes with CHRONARY_API_KEY: no sign-up, verify and calendar with that key', async () => {
+    const r = await withApi(
+      { 'POST /v1/agent/verify': verified, 'POST /v1/calendars': calendar },
+      ['--verify-only', '--json'],
+      { CHRONARY_API_KEY: KEY, CHRONARY_OTP: '654321' },
+    );
+    expect(r.code).toBe(0);
+    expect(r.seen.map((s) => s.route)).toEqual(['POST /v1/agent/verify', 'POST /v1/calendars']);
+    expect(r.seen[0]).toMatchObject({ auth: `Bearer ${KEY}`, body: { otp: '654321' } });
+    expect(JSON.parse(r.stdout.trim())).toEqual({ api_key: KEY, calendar_id: 'cal_anon0000001' });
+  });
+
+  it('--verify-only exits 2 without CHRONARY_API_KEY or with --email, before any call', () => {
+    const noKey = run(['--verify-only', '--otp', '123456']);
+    expect(noKey.status).toBe(2);
+    expect(noKey.stderr).toMatch(/CHRONARY_API_KEY, which is unset/);
+    const withEmail = run(['--verify-only', '--email', 'a@example.com'], { CHRONARY_API_KEY: KEY });
+    expect(withEmail.status).toBe(2);
+    expect(withEmail.stderr).toMatch(/drop --email/);
+  });
+
+  it('--verify-only ignores CHRONARY_EMAIL / CHRONARY_ANONYMOUS left in the environment (CI jobs set them for every step)', async () => {
+    const r = await withApi(
+      { 'POST /v1/agent/verify': verified, 'POST /v1/calendars': calendar },
+      ['--verify-only'],
+      { CHRONARY_API_KEY: KEY, CHRONARY_OTP: '654321', CHRONARY_EMAIL: 'ci@example.com', CHRONARY_ANONYMOUS: '1' },
+    );
+    expect(r.code).toBe(0);
+    expect(r.seen.map((s) => s.route)).toEqual(['POST /v1/agent/verify', 'POST /v1/calendars']);
+    expect(r.stdout.trim()).toBe(KEY);
+  });
+
+  it('a refused code says how to get a new one: re-run sign-up (key stays valid), then --verify-only', async () => {
+    const refused: Route = () => ({ status: 400, body: { error: { type: 'validation_error', message: 'Invalid or expired verification code' } } });
+    const first = await withApi(
+      { 'GET /v1/auth/terms/current': terms, 'POST /v1/agent/sign-up': signUp, 'POST /v1/agent/verify': refused },
+      ['--email', 'late@example.com', '--otp', '123456'],
+    );
+    expect(first.code).toBe(1);
+    expect(first.stderr).toMatch(/re-run sign-up with\s+the same email to get a new code \(the key stays valid/);
+    const resumed = await withApi({ 'POST /v1/agent/verify': refused }, ['--verify-only'], { CHRONARY_API_KEY: KEY, CHRONARY_OTP: '111111' });
+    expect(resumed.code).toBe(1);
+    expect(resumed.stderr).toMatch(/Run --verify-only again[\s\S]*re-run sign-up/);
+  });
+
+  it('a second sign-up for the same email (opaque 200, no key) points at --verify-only with the new code', async () => {
+    const r = await withApi(
+      {
+        'GET /v1/auth/terms/current': terms,
+        'POST /v1/agent/sign-up': () => ({ status: 200, body: { message: 'If this email is new, check your inbox.' } }),
+      },
+      ['--email', 'bughunt-a@example.com', '--otp', '654321'],
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/opaque \(duplicate\) response/);
+    expect(r.stderr).toMatch(/CHRONARY_OTP=<new code> npx @chronary\/agent-init --verify-only/);
+    expect(r.seen.map((s) => s.route)).not.toContain('POST /v1/agent/verify');
   });
 });
 

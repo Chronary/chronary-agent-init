@@ -1,6 +1,19 @@
 # @chronary/agent-init — Changelog
 
-## 0.2.1 (unreleased)
+## 0.3.0 (unreleased)
+
+- Every request sends `X-Chronary-Client: chronary-agent-init/<version>`, so
+  the API attributes a sign-up made with agent-init to it (#976). Before, it
+  sent no client header and its sign-ups counted as raw REST.
+- The email flow prints the key (`export CHRONARY_API_KEY=...` on stderr) as
+  soon as the sign-up returns it, before the OTP is read (#2518). Before, it
+  came only at the end, so a missing OTP with no TTY, a wrong code or a failed
+  smoke calendar lost the org's only copy of the key, and a re-run for the
+  same unverified email returns no key. New `--verify-only` finishes such a
+  sign-up with the key from `CHRONARY_API_KEY` and the OTP: verify, then the
+  smoke calendar, with no new sign-up.
+
+## 0.2.1 (2026-11-22)
 
 - The smoke calendar's time zone no longer comes straight from `TZ`. The API
   now rejects a time zone name it cannot use (#2512), and POSIX values such as
@@ -9,7 +22,7 @@
   it is a zone name the API accepts; otherwise the runtime's own zone, then
   `UTC`.
 
-## 0.2.0
+## 0.2.0 (2026-11-20)
 
 - `--anonymous` (or `CHRONARY_ANONYMOUS=1`) signs up without an email or OTP
   (#2335). It calls `POST /v1/agent/sign-up/anonymous`, which creates a

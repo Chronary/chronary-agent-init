@@ -4,12 +4,19 @@
  *
  *   npx @chronary/agent-init [--email <e>] [--otp <n>] [--api <url>]
  *   npx @chronary/agent-init --anonymous
+ *   CHRONARY_API_KEY=<key> npx @chronary/agent-init --verify-only [--otp <n>]
  *
  * Performs (email flow):
  *   1. POST /v1/agent/sign-up
  *   2. Reads OTP from CHRONARY_OTP / --otp / stdin (TTY only)
  *   3. POST /v1/agent/verify
  *   4. POST /v1/calendars (smoke calendar to prove write access)
+ *   The key is shown on stderr as soon as step 1 returns it: it is the org's
+ *   only copy, and a re-run for the same unverified email returns no key
+ *   (#2518). If step 2, 3 or 4 fails, finish with --verify-only.
+ *
+ * With --verify-only, no sign-up: steps 2-4 with the key from
+ * CHRONARY_API_KEY (env only, never argv).
  *
  * With --anonymous (#2335), no email and no OTP:
  *   1. POST /v1/agent/sign-up/anonymous: a claimable org whose key works at
@@ -38,6 +45,9 @@ import { VERSION } from './version.js';
 import { MAX_RETRY_AFTER_SECONDS, retryWaitSeconds } from './retry.js';
 import { calendarTimeZone } from './timezone.js';
 
+/** `X-Chronary-Client` on every request, so the API can tell agent-init sign-ups apart (#976). */
+const CLIENT_HEADER = `chronary-agent-init/${VERSION}`;
+
 interface Args {
   email?: string;
   otp?: string;
@@ -45,6 +55,10 @@ interface Args {
   agentName: string;
   tosVersion?: string;
   anonymous: boolean;
+  /** `--email` / `--anonymous` given on the command line (not just in the environment). */
+  emailFlag: boolean;
+  anonymousFlag: boolean;
+  verifyOnly: boolean;
   json: boolean;
 }
 
@@ -56,17 +70,27 @@ function parseArgs(): Args {
     otp: env.CHRONARY_OTP,
     tosVersion: env.CHRONARY_TOS_VERSION,
     anonymous: env.CHRONARY_ANONYMOUS === '1' || env.CHRONARY_ANONYMOUS?.toLowerCase() === 'true',
+    emailFlag: false,
+    anonymousFlag: false,
+    verifyOnly: false,
     json: false,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--email') out.email = argv[++i];
+    if (a === '--email') {
+      out.email = argv[++i];
+      out.emailFlag = true;
+    }
     else if (a === '--otp') out.otp = argv[++i];
     else if (a === '--api') out.api = argv[++i];
     else if (a === '--agent-name') out.agentName = argv[++i];
     else if (a === '--tos-version') out.tosVersion = argv[++i];
-    else if (a === '--anonymous') out.anonymous = true;
+    else if (a === '--anonymous') {
+      out.anonymous = true;
+      out.anonymousFlag = true;
+    }
     else if (a === '--json') out.json = true;
+    else if (a === '--verify-only') out.verifyOnly = true;
     else if (a === '--help' || a === '-h') {
       stdout.write(HELP);
       exit(0);
@@ -90,6 +114,9 @@ Flags (env vars take precedence):
                          works at once at Sandbox limits; give the printed claim
                          link to the person who should own the calendar. Unclaimed,
                          everything is deleted after 72 hours. No --email or --otp.
+  --verify-only          Finish an email sign-up that stopped before verify: reads
+                         the key from CHRONARY_API_KEY and the OTP as usual, then
+                         verifies and creates the calendar. No new sign-up.
   --json                 Print one JSON line on stdout instead of the bare key
   --api <url>            API base URL (CHRONARY_API, default api.chronary.ai)
   --agent-name <name>    Display name for the default agent
@@ -108,7 +135,8 @@ async function fetchJson(
 ): Promise<{ status: number; body: unknown; retryAfter?: number }> {
   const res = await fetch(url, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+    // The API attributes the sign-up to agent-init by this header (#976).
+    headers: { 'Content-Type': 'application/json', 'X-Chronary-Client': CLIENT_HEADER, ...(init.headers ?? {}) },
   });
   const retryAfterHeader = res.headers.get('retry-after');
   const retryAfter = retryAfterHeader ? Number(retryAfterHeader) : undefined;
@@ -150,9 +178,12 @@ async function signUpWithBackoff(
         return { apiKey: body.api_key, orgId: body.org_id, agentId: body.agent_id };
       }
       throw new Error(
-        'Sign-up succeeded but returned the opaque (duplicate) response. ' +
-          'The email may already be registered. ' +
-          'If you have the prior API key, set CHRONARY_API_KEY and skip this command.',
+        'Sign-up returned the opaque (duplicate) response: this email already has an organization, ' +
+          'and its key is never shown again.\n' +
+          '  Not verified yet: a new code was emailed (if the last one went out over a minute ago). ' +
+          'Finish with the key from the first run:\n' +
+          '    CHRONARY_API_KEY=<key> CHRONARY_OTP=<new code> npx @chronary/agent-init --verify-only\n' +
+          '  Already verified: use the key you have.',
       );
     }
     if (r.status === 202 && (r.body as { waitlisted?: unknown } | null)?.waitlisted === true) {
@@ -260,12 +291,9 @@ async function signUpAnonymousWithBackoff(
   exit(3);
 }
 
-async function readOtpInteractive(): Promise<string> {
+async function readOtpInteractive(hint: string): Promise<string> {
   if (!stdin.isTTY) {
-    stderr.write(
-      'agent-init: stdin is not a TTY and CHRONARY_OTP is unset. ' +
-        'Set CHRONARY_OTP=<6 digits> or pass --otp.\n',
-    );
+    stderr.write('agent-init: stdin is not a TTY and CHRONARY_OTP is unset.\n' + hint);
     exit(2);
   }
   const rl = readline.createInterface({ input: stdin, output: stderr });
@@ -384,6 +412,10 @@ async function mainAnonymous(args: Args): Promise<void> {
 
 async function main(): Promise<void> {
   const args = parseArgs();
+  if (args.verifyOnly) {
+    await mainVerifyOnly(args);
+    return;
+  }
   if (args.anonymous) {
     await mainAnonymous(args);
     return;
@@ -415,17 +447,13 @@ async function main(): Promise<void> {
   stderr.write(`  Org:   ${signup.orgId}\n`);
   stderr.write(`  Agent: ${signup.agentId}\n`);
 
-  const otp = args.otp ?? (await readOtpInteractive());
-  if (!/^\d{6}$/.test(otp)) {
-    stderr.write(`agent-init: OTP must be exactly 6 digits, got ${JSON.stringify(otp)}\n`);
-    exit(2);
-  }
-  await verifyOtp(args.api, signup.apiKey, otp);
-  stderr.write(`  Verified.\n`);
+  // The org exists now and this response is its only copy of the key: a
+  // re-run for the same unverified email rotates the OTP and returns no key.
+  // Print it before the OTP read, verify or calendar can fail (#2518).
+  stderr.write(`\nExport your key (shown only once):\n  export CHRONARY_API_KEY=${signup.apiKey}\n\n`);
 
-  const cal = await createSmokeCalendar(args.api, signup.apiKey);
-  stderr.write(`  Created calendar ${cal.id}.\n`);
-  stderr.write(`\nDone. Export your key:\n  export CHRONARY_API_KEY=${signup.apiKey}\n`);
+  const cal = await finishEmailSignUp(args, signup.apiKey, RESUME_HINT);
+  stderr.write(`\nDone.\n`);
 
   if (args.json) {
     stdout.write(
@@ -434,6 +462,81 @@ async function main(): Promise<void> {
   } else {
     // Last line of stdout is machine-readable — pipe-into-eval friendly.
     stdout.write(`${signup.apiKey}\n`);
+  }
+}
+
+const RESUME_HINT =
+  '  The sign-up worked and the key above is valid; keep it (a re-run for this email\n' +
+  '  never shows it again). Finish with the code from your email (valid for 60 minutes):\n' +
+  '    CHRONARY_API_KEY=<key above> CHRONARY_OTP=<6 digits> npx @chronary/agent-init --verify-only\n';
+
+const VERIFY_ONLY_HINT =
+  '  Run --verify-only again with CHRONARY_OTP=<6 digits> from your latest email.\n';
+
+/** After a refused code: a typo is retried with --verify-only; an expired or used-up code needs a new one. */
+const NEW_CODE_HINT =
+  '  If the code expired (60 minutes) or too many tries used it up: re-run sign-up with\n' +
+  '  the same email to get a new code (the key stays valid; that run prints no key),\n' +
+  '  then run --verify-only with the new code.\n';
+
+/**
+ * Steps 2–4 of the email flow: read the OTP, verify, create the smoke
+ * calendar. Every failure says how to finish with --verify-only, so a key
+ * already shown is never stranded (#2518).
+ */
+async function finishEmailSignUp(args: Args, apiKey: string, hint: string): Promise<{ id: string }> {
+  const otp = args.otp ?? (await readOtpInteractive(hint));
+  if (!/^\d{6}$/.test(otp)) {
+    stderr.write(`agent-init: OTP must be exactly 6 digits, got ${JSON.stringify(otp)}\n${hint}`);
+    exit(2);
+  }
+  try {
+    await verifyOtp(args.api, apiKey, otp);
+  } catch (err) {
+    stderr.write(`agent-init: ${err instanceof Error ? err.message : String(err)}\n${hint}${NEW_CODE_HINT}`);
+    exit(1);
+  }
+  stderr.write(`  Verified.\n`);
+
+  try {
+    const cal = await createSmokeCalendar(args.api, apiKey);
+    stderr.write(`  Created calendar ${cal.id}.\n`);
+    return cal;
+  } catch (err) {
+    stderr.write(
+      `agent-init: ${err instanceof Error ? err.message : String(err)}\n` +
+        '  The sign-up and verify worked: the key is valid. Create a calendar yourself\n' +
+        '  with POST /v1/calendars.\n',
+    );
+    exit(1);
+  }
+}
+
+async function mainVerifyOnly(args: Args): Promise<void> {
+  // CHRONARY_EMAIL / CHRONARY_ANONYMOUS in the environment (often set for a
+  // whole CI job) are ignored here; only an explicit flag is a conflict.
+  if (args.anonymousFlag || args.emailFlag) {
+    stderr.write('agent-init: --verify-only finishes an earlier sign-up; drop --email / --anonymous.\n');
+    exit(2);
+  }
+  // The key comes from the environment only, never argv.
+  const apiKey = env.CHRONARY_API_KEY;
+  if (!apiKey) {
+    stderr.write('agent-init: --verify-only reads the key from CHRONARY_API_KEY, which is unset.\n');
+    exit(2);
+  }
+  if (args.otp !== undefined && !/^\d{6}$/.test(args.otp)) {
+    stderr.write(`agent-init: OTP must be exactly 6 digits, got ${JSON.stringify(args.otp)}\n`);
+    exit(2);
+  }
+  stderr.write(`Finishing sign-up at ${args.api}\n`);
+  const cal = await finishEmailSignUp(args, apiKey, VERIFY_ONLY_HINT);
+  stderr.write(`\nDone.\n`);
+  if (args.json) {
+    stdout.write(`${JSON.stringify({ api_key: apiKey, calendar_id: cal.id })}\n`);
+  } else {
+    // Same stdout contract as a full run: the key is the last line.
+    stdout.write(`${apiKey}\n`);
   }
 }
 
