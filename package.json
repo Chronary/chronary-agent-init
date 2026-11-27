@@ -1,6 +1,6 @@
 {
   "name": "@chronary/agent-init",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "One-liner bootstrap for AI agents: sign up (with an email and OTP, or with no email as a claimable calendar), create a smoke calendar. `npx @chronary/agent-init`.",
   "license": "Apache-2.0",
   "type": "module",

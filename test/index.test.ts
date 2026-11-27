@@ -375,6 +375,42 @@ describe('@chronary/agent-init --json (email flow)', () => {
   });
 });
 
+describe('@chronary/agent-init --heard-about (#2651)', () => {
+  const routes = {
+    'GET /v1/auth/terms/current': terms,
+    'POST /v1/agent/sign-up': () => ({
+      status: 200,
+      body: { api_key: 'chr_sk_email', org_id: 'org-1', agent_id: 'agt_email0000001' },
+    }),
+    'POST /v1/agent/verify': () => ({ status: 200, body: { verified: true } }),
+    'POST /v1/calendars': calendar,
+  };
+  const signUpBody = (r: Awaited<ReturnType<typeof withApi>>) => r.seen.find((s) => s.route === 'POST /v1/agent/sign-up')?.body;
+
+  it('sends --heard-about with the email sign-up', async () => {
+    const r = await withApi(routes, ['--email', 'agent@example.com', '--otp', '123456', '--json', '--heard-about', ' My user asked me to ']);
+    expect(r.code).toBe(0);
+    expect(signUpBody(r)).toMatchObject({ heard_about: 'My user asked me to' });
+  });
+
+  it('reads CHRONARY_HEARD_ABOUT, and sends nothing when neither is set', async () => {
+    const withEnv = await withApi(routes, ['--email', 'agent@example.com', '--otp', '123456', '--json'], { CHRONARY_HEARD_ABOUT: 'a forum' });
+    expect(signUpBody(withEnv)).toMatchObject({ heard_about: 'a forum' });
+    const without = await withApi(routes, ['--email', 'agent@example.com', '--otp', '123456', '--json']);
+    expect(signUpBody(without)).not.toHaveProperty('heard_about');
+  });
+
+  it('cuts --heard-about to 200 characters so a long answer never costs the sign-up', async () => {
+    const r = await withApi(routes, ['--email', 'agent@example.com', '--otp', '123456', '--json', '--heard-about', `${'a'.repeat(199)}\u{1F4C5}${'b'.repeat(100)}`]);
+    expect(r.code).toBe(0);
+    expect(signUpBody(r)?.heard_about).toBe(`${'a'.repeat(199)}\u{1F4C5}`);
+  });
+
+  it('documents --heard-about in --help', () => {
+    expect(run(['--help']).stdout).toMatch(/--heard-about <text>/);
+  });
+});
+
 // ── #2518: the email flow shows the one-time key before anything can fail ──
 
 describe('@chronary/agent-init email flow keeps the key when a later step fails (#2518)', () => {

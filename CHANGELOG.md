@@ -1,6 +1,13 @@
 # @chronary/agent-init — Changelog
 
-## 0.3.0 (unreleased)
+## 0.3.1 (unreleased)
+
+- New optional `--heard-about <text>` (or `CHRONARY_HEARD_ABOUT`): how you
+  found Chronary, plain text cut to 200 characters, sent as `heard_about` with
+  an email sign-up (#2651). The API keeps it for a new organization only and
+  never returns it. Without it, the sign-up request is unchanged.
+
+## 0.3.0 (2026-11-25)
 
 - Every request sends `X-Chronary-Client: chronary-agent-init/<version>`, so
   the API attributes a sign-up made with agent-init to it (#976). Before, it

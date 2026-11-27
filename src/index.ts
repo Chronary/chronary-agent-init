@@ -54,6 +54,8 @@ interface Args {
   api: string;
   agentName: string;
   tosVersion?: string;
+  /** How the agent found Chronary (#2651): optional plain text, email sign-up only. */
+  heardAbout?: string;
   anonymous: boolean;
   /** `--email` / `--anonymous` given on the command line (not just in the environment). */
   emailFlag: boolean;
@@ -69,6 +71,7 @@ function parseArgs(): Args {
     email: env.CHRONARY_EMAIL,
     otp: env.CHRONARY_OTP,
     tosVersion: env.CHRONARY_TOS_VERSION,
+    heardAbout: env.CHRONARY_HEARD_ABOUT,
     anonymous: env.CHRONARY_ANONYMOUS === '1' || env.CHRONARY_ANONYMOUS?.toLowerCase() === 'true',
     emailFlag: false,
     anonymousFlag: false,
@@ -85,6 +88,7 @@ function parseArgs(): Args {
     else if (a === '--api') out.api = argv[++i];
     else if (a === '--agent-name') out.agentName = argv[++i];
     else if (a === '--tos-version') out.tosVersion = argv[++i];
+    else if (a === '--heard-about') out.heardAbout = argv[++i];
     else if (a === '--anonymous') {
       out.anonymous = true;
       out.anonymousFlag = true;
@@ -121,6 +125,8 @@ Flags (env vars take precedence):
   --api <url>            API base URL (CHRONARY_API, default api.chronary.ai)
   --agent-name <name>    Display name for the default agent
   --tos-version <ver>    Override ToS version (else fetched at runtime)
+  --heard-about <text>   Optional: how you found Chronary, plain text up to 200
+                         characters (CHRONARY_HEARD_ABOUT). Email sign-up only.
   -h, --help             Show this help
 
 Signing up accepts the Terms of Service (https://chronary.ai/terms) for the
@@ -160,7 +166,7 @@ async function fetchTos(api: string): Promise<string> {
 
 async function signUpWithBackoff(
   api: string,
-  payload: { email: string; agent_name: string; tos_version: string },
+  payload: { email: string; agent_name: string; tos_version: string; heard_about?: string },
 ): Promise<{ apiKey: string; orgId: string; agentId: string }> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const r = await fetchJson(`${api}/v1/agent/sign-up`, {
@@ -439,10 +445,13 @@ async function main(): Promise<void> {
   const tosVersion = args.tosVersion ?? (await fetchTos(args.api));
   stderr.write(`  ToS version: ${tosVersion}\n`);
 
+  // Informational (#2651): cut to 200 characters so it never costs the sign-up.
+  const heardAbout = args.heardAbout ? Array.from(args.heardAbout.trim()).slice(0, 200).join('').trim() : undefined;
   const signup = await signUpWithBackoff(args.api, {
     email: args.email,
     agent_name: args.agentName,
     tos_version: tosVersion,
+    ...(heardAbout ? { heard_about: heardAbout } : {}),
   });
   stderr.write(`  Org:   ${signup.orgId}\n`);
   stderr.write(`  Agent: ${signup.agentId}\n`);

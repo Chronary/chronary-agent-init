@@ -91,6 +91,7 @@ Signing up (either flow) accepts the [Terms of Service](https://chronary.ai/term
 | `--json` | `CHRONARY_JSON=1` (shell version only) | off | One JSON line on stdout instead of the bare key |
 | `--api` | `CHRONARY_API` | `https://api.chronary.ai` | API base URL |
 | `--agent-name` | `CHRONARY_AGENT_NAME` | `Bootstrap Agent` | Display name |
+| `--heard-about` | `CHRONARY_HEARD_ABOUT` | _(none)_ | Optional: how you found Chronary, plain text up to 200 characters (email sign-up only; never returned) |
 | `--tos-version` | `CHRONARY_TOS_VERSION` | _(fetched live)_ | Pin a ToS version. A pinned version is never swapped: if it is out of date, the command exits 1 and names the current one |
 
 ## Shell fallback (no Node)
